@@ -1,5 +1,5 @@
 import tensorflow as tf
-from tensorflow.contrib import slim
+#from tensorflow.contrib import slim
 import cv2
 import os, random
 import numpy as np
@@ -12,9 +12,9 @@ class ImageData:
         self.augment_flag = augment_flag
 
     def image_processing(self, filename):
-        x = tf.read_file(filename)
+        x = tf.io.read_file(filename)
         x_decode = tf.image.decode_jpeg(x, channels=self.channels)
-        img = tf.image.resize_images(x_decode, [self.load_size, self.load_size])
+        img = tf.image.resize(x_decode, [self.load_size, self.load_size])
         img = tf.cast(img, tf.float32) / 127.5 - 1
 
         if self.augment_flag :
@@ -38,10 +38,10 @@ def load_test_data(image_path, size=256):
 
 def augmentation(image, augment_size):
     seed = random.randint(0, 2 ** 31 - 1)
-    ori_image_shape = tf.shape(image)
+    ori_image_shape = tf.shape(input=image)
     image = tf.image.random_flip_left_right(image, seed=seed)
-    image = tf.image.resize_images(image, [augment_size, augment_size])
-    image = tf.random_crop(image, ori_image_shape, seed=seed)
+    image = tf.image.resize(image, [augment_size, augment_size])
+    image = tf.image.random_crop(image, ori_image_shape, seed=seed)
     return image
 
 def save_images(images, size, image_path):
@@ -68,8 +68,8 @@ def merge(images, size):
     return img
 
 def show_all_variables():
-    model_vars = tf.trainable_variables()
-    slim.model_analyzer.analyze_vars(model_vars, print_info=True)
+    model_vars = tf.compat.v1.trainable_variables()
+    #slim.model_analyzer.analyze_vars(model_vars, print_info=True)
 
 def check_folder(log_dir):
     if not os.path.exists(log_dir):

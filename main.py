@@ -84,8 +84,11 @@ def main():
     if args is None:
       exit()
 
+    # compatibility
+    tf.compat.v1.disable_resource_variables()
+
     # open session
-    with tf.Session(config=tf.ConfigProto(allow_soft_placement=True)) as sess:
+    with tf.compat.v1.Session(config=tf.compat.v1.ConfigProto(allow_soft_placement=True)) as sess:
         gan = UGATIT(sess, args)
 
         # build graph

@@ -2,7 +2,8 @@ from ops import *
 from utils import *
 from glob import glob
 import time
-from tensorflow.contrib.data import prefetch_to_device, shuffle_and_repeat, map_and_batch
+#from tensorflow.contrib.data import prefetch_to_device, shuffle_and_repeat, map_and_batch
+from tensorflow.data.experimental import prefetch_to_device
 import numpy as np
 
 class UGATIT(object) :
@@ -102,7 +103,7 @@ class UGATIT(object) :
 
     def generator(self, x_init, reuse=False, scope="generator"):
         channel = self.ch
-        with tf.variable_scope(scope, reuse=reuse) :
+        with tf.compat.v1.variable_scope(scope, reuse=reuse) :
             x = conv(x_init, channel, kernel=7, stride=1, pad=3, pad_type='reflect', scope='conv')
             x = instance_norm(x, scope='ins_norm')
             x = relu(x)
@@ -136,7 +137,7 @@ class UGATIT(object) :
             x = conv(x, channel, kernel=1, stride=1, scope='conv_1x1')
             x = relu(x)
 
-            heatmap = tf.squeeze(tf.reduce_sum(x, axis=-1))
+            heatmap = tf.squeeze(tf.reduce_sum(input_tensor=x, axis=-1))
 
             # Gamma, Beta block
             gamma, beta = self.MLP(x, reuse=reuse)
@@ -166,7 +167,7 @@ class UGATIT(object) :
         if self.light :
             x = global_avg_pooling(x)
 
-        with tf.variable_scope(scope, reuse=reuse):
+        with tf.compat.v1.variable_scope(scope, reuse=reuse):
             for i in range(2) :
                 x = fully_connected(x, channel, use_bias, scope='linear_' + str(i))
                 x = relu(x)
@@ -187,7 +188,7 @@ class UGATIT(object) :
     def discriminator(self, x_init, reuse=False, scope="discriminator"):
         D_logit = []
         D_CAM_logit = []
-        with tf.variable_scope(scope, reuse=reuse) :
+        with tf.compat.v1.variable_scope(scope, reuse=reuse) :
             local_x, local_cam, local_heatmap = self.discriminator_local(x_init, reuse=reuse, scope='local')
             global_x, global_cam, global_heatmap = self.discriminator_global(x_init, reuse=reuse, scope='global')
 
@@ -197,7 +198,7 @@ class UGATIT(object) :
             return D_logit, D_CAM_logit, local_heatmap, global_heatmap
 
     def discriminator_global(self, x_init, reuse=False, scope='discriminator_global'):
-        with tf.variable_scope(scope, reuse=reuse):
+        with tf.compat.v1.variable_scope(scope, reuse=reuse):
             channel = self.ch
             x = conv(x_init, channel, kernel=4, stride=2, pad=1, pad_type='reflect', sn=self.sn, scope='conv_0')
             x = lrelu(x, 0.2)
@@ -227,7 +228,7 @@ class UGATIT(object) :
             x = conv(x, channel, kernel=1, stride=1, scope='conv_1x1')
             x = lrelu(x, 0.2)
 
-            heatmap = tf.squeeze(tf.reduce_sum(x, axis=-1))
+            heatmap = tf.squeeze(tf.reduce_sum(input_tensor=x, axis=-1))
 
 
             x = conv(x, channels=1, kernel=4, stride=1, pad=1, pad_type='reflect', sn=self.sn, scope='D_logit')
@@ -235,7 +236,7 @@ class UGATIT(object) :
             return x, cam_logit, heatmap
 
     def discriminator_local(self, x_init, reuse=False, scope='discriminator_local'):
-        with tf.variable_scope(scope, reuse=reuse) :
+        with tf.compat.v1.variable_scope(scope, reuse=reuse) :
             channel = self.ch
             x = conv(x_init, channel, kernel=4, stride=2, pad=1, pad_type='reflect', sn=self.sn, scope='conv_0')
             x = lrelu(x, 0.2)
@@ -265,7 +266,7 @@ class UGATIT(object) :
             x = conv(x, channel, kernel=1, stride=1, scope='conv_1x1')
             x = lrelu(x, 0.2)
 
-            heatmap = tf.squeeze(tf.reduce_sum(x, axis=-1))
+            heatmap = tf.squeeze(tf.reduce_sum(input_tensor=x, axis=-1))
 
             x = conv(x, channels=1, kernel=4, stride=1, pad=1, pad_type='reflect', sn=self.sn, scope='D_logit')
 
@@ -299,13 +300,13 @@ class UGATIT(object) :
 
     def gradient_panalty(self, real, fake, scope="discriminator_A"):
         if self.gan_type.__contains__('dragan'):
-            eps = tf.random_uniform(shape=tf.shape(real), minval=0., maxval=1.)
-            _, x_var = tf.nn.moments(real, axes=[0, 1, 2, 3])
+            eps = tf.random.uniform(shape=tf.shape(input=real), minval=0., maxval=1.)
+            _, x_var = tf.nn.moments(x=real, axes=[0, 1, 2, 3])
             x_std = tf.sqrt(x_var)  # magnitude of noise decides the size of local region
 
             fake = real + 0.5 * x_std * eps
 
-        alpha = tf.random_uniform(shape=[self.batch_size, 1, 1, 1], minval=0., maxval=1.)
+        alpha = tf.random.uniform(shape=[self.batch_size, 1, 1, 1], minval=0., maxval=1.)
         interpolated = real + alpha * (fake - real)
 
         logit, cam_logit, _, _ = self.discriminator(interpolated, reuse=True, scope=scope)
@@ -315,33 +316,33 @@ class UGATIT(object) :
         cam_GP = []
 
         for i in range(2) :
-            grad = tf.gradients(logit[i], interpolated)[0] # gradient of D(interpolated)
-            grad_norm = tf.norm(flatten(grad), axis=1) # l2 norm
+            grad = tf.gradients(ys=logit[i], xs=interpolated)[0] # gradient of D(interpolated)
+            grad_norm = tf.norm(tensor=flatten(grad), axis=1) # l2 norm
 
             # WGAN - LP
             if self.gan_type == 'wgan-lp' :
-                GP.append(self.ld * tf.reduce_mean(tf.square(tf.maximum(0.0, grad_norm - 1.))))
+                GP.append(self.ld * tf.reduce_mean(input_tensor=tf.square(tf.maximum(0.0, grad_norm - 1.))))
 
             elif self.gan_type == 'wgan-gp' or self.gan_type == 'dragan':
-                GP.append(self.ld * tf.reduce_mean(tf.square(grad_norm - 1.)))
+                GP.append(self.ld * tf.reduce_mean(input_tensor=tf.square(grad_norm - 1.)))
 
         for i in range(2) :
-            grad = tf.gradients(cam_logit[i], interpolated)[0] # gradient of D(interpolated)
-            grad_norm = tf.norm(flatten(grad), axis=1) # l2 norm
+            grad = tf.gradients(ys=cam_logit[i], xs=interpolated)[0] # gradient of D(interpolated)
+            grad_norm = tf.norm(tensor=flatten(grad), axis=1) # l2 norm
 
             # WGAN - LP
             if self.gan_type == 'wgan-lp' :
-                cam_GP.append(self.ld * tf.reduce_mean(tf.square(tf.maximum(0.0, grad_norm - 1.))))
+                cam_GP.append(self.ld * tf.reduce_mean(input_tensor=tf.square(tf.maximum(0.0, grad_norm - 1.))))
 
             elif self.gan_type == 'wgan-gp' or self.gan_type == 'dragan':
-                cam_GP.append(self.ld * tf.reduce_mean(tf.square(grad_norm - 1.)))
+                cam_GP.append(self.ld * tf.reduce_mean(input_tensor=tf.square(grad_norm - 1.)))
 
 
         return sum(GP), sum(cam_GP)
 
     def build_model(self):
         if self.phase == 'train' :
-            self.lr = tf.placeholder(tf.float32, name='learning_rate')
+            self.lr = tf.compat.v1.placeholder(tf.float32, name='learning_rate')
 
 
             """ Input Image"""
@@ -352,12 +353,17 @@ class UGATIT(object) :
 
 
             gpu_device = '/gpu:0'
-            trainA = trainA.apply(shuffle_and_repeat(self.dataset_num)).apply(map_and_batch(Image_Data_Class.image_processing, self.batch_size, num_parallel_batches=16, drop_remainder=True)).apply(prefetch_to_device(gpu_device, None))
-            trainB = trainB.apply(shuffle_and_repeat(self.dataset_num)).apply(map_and_batch(Image_Data_Class.image_processing, self.batch_size, num_parallel_batches=16, drop_remainder=True)).apply(prefetch_to_device(gpu_device, None))
+            # shuffle_and_repeat, map_and_batch deprecated
+            # See: https://www.tensorflow.org/api_docs/python/tf/data/experimental/shuffle_and_repeat?hl=en
+            # https://www.tensorflow.org/api_docs/python/tf/data/experimental/map_and_batch
+            trainA = trainA.shuffle(self.dataset_num).repeat().map(map_func=Image_Data_Class.image_processing, num_parallel_calls=16).batch(batch_size=self.batch_size, drop_remainder=True).apply(prefetch_to_device(gpu_device, None))
+            trainB = trainB.shuffle(self.dataset_num).repeat().map(map_func=Image_Data_Class.image_processing, num_parallel_calls=16).batch(batch_size=self.batch_size, drop_remainder=True).apply(prefetch_to_device(gpu_device, None))
+            #trainA = trainA.apply(shuffle_and_repeat(self.dataset_num)).apply(map_and_batch(Image_Data_Class.image_processing, self.batch_size, num_parallel_batches=16, drop_remainder=True)).apply(prefetch_to_device(gpu_device, None))
+            #trainB = trainB.apply(shuffle_and_repeat(self.dataset_num)).apply(map_and_batch(Image_Data_Class.image_processing, self.batch_size, num_parallel_batches=16, drop_remainder=True)).apply(prefetch_to_device(gpu_device, None))
 
 
-            trainA_iterator = trainA.make_one_shot_iterator()
-            trainB_iterator = trainB.make_one_shot_iterator()
+            trainA_iterator = tf.compat.v1.data.make_one_shot_iterator(trainA)
+            trainB_iterator = tf.compat.v1.data.make_one_shot_iterator(trainB)
 
             self.domain_A = trainA_iterator.get_next()
             self.domain_B = trainB_iterator.get_next()
@@ -431,40 +437,40 @@ class UGATIT(object) :
 
 
             """ Training """
-            t_vars = tf.trainable_variables()
+            t_vars = tf.compat.v1.trainable_variables()
             G_vars = [var for var in t_vars if 'generator' in var.name]
             D_vars = [var for var in t_vars if 'discriminator' in var.name]
 
-            self.G_optim = tf.train.AdamOptimizer(self.lr, beta1=0.5, beta2=0.999).minimize(self.Generator_loss, var_list=G_vars)
-            self.D_optim = tf.train.AdamOptimizer(self.lr, beta1=0.5, beta2=0.999).minimize(self.Discriminator_loss, var_list=D_vars)
+            self.G_optim = tf.compat.v1.train.AdamOptimizer(self.lr, beta1=0.5, beta2=0.999).minimize(self.Generator_loss, var_list=G_vars)
+            self.D_optim = tf.compat.v1.train.AdamOptimizer(self.lr, beta1=0.5, beta2=0.999).minimize(self.Discriminator_loss, var_list=D_vars)
 
 
             """" Summary """
-            self.all_G_loss = tf.summary.scalar("Generator_loss", self.Generator_loss)
-            self.all_D_loss = tf.summary.scalar("Discriminator_loss", self.Discriminator_loss)
+            self.all_G_loss = tf.compat.v1.summary.scalar("Generator_loss", self.Generator_loss)
+            self.all_D_loss = tf.compat.v1.summary.scalar("Discriminator_loss", self.Discriminator_loss)
 
-            self.G_A_loss = tf.summary.scalar("G_A_loss", Generator_A_loss)
-            self.G_A_gan = tf.summary.scalar("G_A_gan", Generator_A_gan)
-            self.G_A_cycle = tf.summary.scalar("G_A_cycle", Generator_A_cycle)
-            self.G_A_identity = tf.summary.scalar("G_A_identity", Generator_A_identity)
-            self.G_A_cam = tf.summary.scalar("G_A_cam", Generator_A_cam)
+            self.G_A_loss = tf.compat.v1.summary.scalar("G_A_loss", Generator_A_loss)
+            self.G_A_gan = tf.compat.v1.summary.scalar("G_A_gan", Generator_A_gan)
+            self.G_A_cycle = tf.compat.v1.summary.scalar("G_A_cycle", Generator_A_cycle)
+            self.G_A_identity = tf.compat.v1.summary.scalar("G_A_identity", Generator_A_identity)
+            self.G_A_cam = tf.compat.v1.summary.scalar("G_A_cam", Generator_A_cam)
 
-            self.G_B_loss = tf.summary.scalar("G_B_loss", Generator_B_loss)
-            self.G_B_gan = tf.summary.scalar("G_B_gan", Generator_B_gan)
-            self.G_B_cycle = tf.summary.scalar("G_B_cycle", Generator_B_cycle)
-            self.G_B_identity = tf.summary.scalar("G_B_identity", Generator_B_identity)
-            self.G_B_cam = tf.summary.scalar("G_B_cam", Generator_B_cam)
+            self.G_B_loss = tf.compat.v1.summary.scalar("G_B_loss", Generator_B_loss)
+            self.G_B_gan = tf.compat.v1.summary.scalar("G_B_gan", Generator_B_gan)
+            self.G_B_cycle = tf.compat.v1.summary.scalar("G_B_cycle", Generator_B_cycle)
+            self.G_B_identity = tf.compat.v1.summary.scalar("G_B_identity", Generator_B_identity)
+            self.G_B_cam = tf.compat.v1.summary.scalar("G_B_cam", Generator_B_cam)
 
-            self.D_A_loss = tf.summary.scalar("D_A_loss", Discriminator_A_loss)
-            self.D_B_loss = tf.summary.scalar("D_B_loss", Discriminator_B_loss)
+            self.D_A_loss = tf.compat.v1.summary.scalar("D_A_loss", Discriminator_A_loss)
+            self.D_B_loss = tf.compat.v1.summary.scalar("D_B_loss", Discriminator_B_loss)
 
             self.rho_var = []
-            for var in tf.trainable_variables():
+            for var in tf.compat.v1.trainable_variables():
                 if 'rho' in var.name:
-                    self.rho_var.append(tf.summary.histogram(var.name, var))
-                    self.rho_var.append(tf.summary.scalar(var.name + "_min", tf.reduce_min(var)))
-                    self.rho_var.append(tf.summary.scalar(var.name + "_max", tf.reduce_max(var)))
-                    self.rho_var.append(tf.summary.scalar(var.name + "_mean", tf.reduce_mean(var)))
+                    self.rho_var.append(tf.compat.v1.summary.histogram(var.name, var))
+                    self.rho_var.append(tf.compat.v1.summary.scalar(var.name + "_min", tf.reduce_min(input_tensor=var)))
+                    self.rho_var.append(tf.compat.v1.summary.scalar(var.name + "_max", tf.reduce_max(input_tensor=var)))
+                    self.rho_var.append(tf.compat.v1.summary.scalar(var.name + "_mean", tf.reduce_mean(input_tensor=var)))
 
             g_summary_list = [self.G_A_loss, self.G_A_gan, self.G_A_cycle, self.G_A_identity, self.G_A_cam,
                               self.G_B_loss, self.G_B_gan, self.G_B_cycle, self.G_B_identity, self.G_B_cam,
@@ -473,13 +479,13 @@ class UGATIT(object) :
             g_summary_list.extend(self.rho_var)
             d_summary_list = [self.D_A_loss, self.D_B_loss, self.all_D_loss]
 
-            self.G_loss = tf.summary.merge(g_summary_list)
-            self.D_loss = tf.summary.merge(d_summary_list)
+            self.G_loss = tf.compat.v1.summary.merge(g_summary_list)
+            self.D_loss = tf.compat.v1.summary.merge(d_summary_list)
 
         else :
             """ Test """
-            self.test_domain_A = tf.placeholder(tf.float32, [1, self.img_size, self.img_size, self.img_ch], name='test_domain_A')
-            self.test_domain_B = tf.placeholder(tf.float32, [1, self.img_size, self.img_size, self.img_ch], name='test_domain_B')
+            self.test_domain_A = tf.compat.v1.placeholder(tf.float32, [1, self.img_size, self.img_size, self.img_ch], name='test_domain_A')
+            self.test_domain_B = tf.compat.v1.placeholder(tf.float32, [1, self.img_size, self.img_size, self.img_ch], name='test_domain_B')
 
 
             self.test_fake_B, _ = self.generate_a2b(self.test_domain_A)
@@ -488,13 +494,13 @@ class UGATIT(object) :
 
     def train(self):
         # initialize all variables
-        tf.global_variables_initializer().run()
+        tf.compat.v1.global_variables_initializer().run()
 
         # saver to save model
-        self.saver = tf.train.Saver()
+        self.saver = tf.compat.v1.train.Saver()
 
         # summary writer
-        self.writer = tf.summary.FileWriter(self.log_dir + '/' + self.model_dir, self.sess.graph)
+        self.writer = tf.compat.v1.summary.FileWriter(self.log_dir + '/' + self.model_dir, self.sess.graph)
 
 
         # restore check-point if it exits
@@ -612,11 +618,11 @@ class UGATIT(object) :
             return False, 0
 
     def test(self):
-        tf.global_variables_initializer().run()
+        tf.compat.v1.global_variables_initializer().run()
         test_A_files = glob('./dataset/{}/*.*'.format(self.dataset_name + '/testA'))
         test_B_files = glob('./dataset/{}/*.*'.format(self.dataset_name + '/testB'))
 
-        self.saver = tf.train.Saver()
+        self.saver = tf.compat.v1.train.Saver()
         could_load, checkpoint_counter = self.load(self.checkpoint_dir)
         self.result_dir = os.path.join(self.result_dir, self.model_dir)
         check_folder(self.result_dir)
